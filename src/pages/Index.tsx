@@ -123,8 +123,7 @@ export default function Index() {
           status: x.statusCode ?? x.status ?? 200,
           responseTime: x.responseTime ?? x.response_time ?? 0,
           isError: Boolean(x.isError ?? x.is_error ?? false),
-          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30")
-            .toLocaleTimeString("en-IN", { hour12: false }),
+          timestamp: new Date(x.timestamp).toLocaleTimeString("en-IN", { hour12: false }),
           sourcePort: x.sourcePort ?? x.source_port ?? 0,
         }))
       );

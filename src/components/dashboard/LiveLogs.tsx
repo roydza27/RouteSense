@@ -81,8 +81,9 @@ export const LiveLogs = ({ logs }: LiveLogsProps) => {
                   )}
                 >
                   <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                    {formatTime(ts)}
+                    {log.timestamp}
                   </span>
+
 
                   <span className={cn("w-14 shrink-0 text-xs font-semibold", methodColors[log.method])}>
                     {log.method}
