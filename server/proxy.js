@@ -55,14 +55,15 @@ app.use(async (req, res) => {
     console.log(`   ✔ Status ${response.status} — ${responseTime}ms`);
 
     // Forward metric to collector (real DB feed)
-    await sendMetricAsync({
-      route: req.path,
+    sendMetricAsync({
+      route: req.url,
       method: req.method,
       status: response.status,
-      response_time: responseTime,  // 👈 match DB column
-      is_error: isError ? 1 : 0,    // 👈 match DB column
-      source_port: CONFIG.PROXY_PORT
+      response_time: responseTime,  // 👈 FIXED
+      is_error: isError ? 1 : 0,    // 👈 FIXED
+      source_port: CONFIG.TARGET_PORT
     });
+
 
 
     res.status(response.status);
@@ -74,7 +75,7 @@ app.use(async (req, res) => {
 
     console.log(`   ❌ Proxy Error ${status} — ${responseTime}ms`);
 
-    await sendMetricAsync({
+    sendMetricAsync({
       route: req.path,
       method: req.method,
       status: status,

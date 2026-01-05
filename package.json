@@ -12,6 +12,7 @@
     "collector": "node server/collector.js --port 3002",
     "lint": "eslint .",
     "preview": "vite preview",
+    "dev": "vite --port 8080",
     "clean": "del metrics.db metrics.db-shm metrics.db-wal"
   }
 ,

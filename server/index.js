@@ -85,23 +85,24 @@ app.post("/api/metrics", (req, res) => {
   const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
   const stmt = db.prepare(`
-      INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
-  VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
     route,
     method,
     status,
-    response_time,
-    is_error,
-    source_port
+    responseTime ?? 0,
+    isError ? 1 : 0,
+    sourcePort ?? null
   );
-
 
   console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
   res.json({ ok: true });
 });
+
+
 
 
 
@@ -113,9 +114,9 @@ app.post("/api/metrics", (req, res) => {
 // Summary statistics
 app.get("/api/metrics/summary", (req, res) => {
   try {
-    const timeWindow = req.query.minutes || 60; // Default: last 60 minutes
-    
-    const summary = db.prepare(`
+    const timeWindow = Number(req.query.minutes) || 60;
+
+    const row = db.prepare(`
       SELECT 
         COUNT(*) as totalRequests,
         AVG(response_time) as avgResponseTime,
@@ -126,22 +127,24 @@ app.get("/api/metrics/summary", (req, res) => {
       AND route NOT LIKE '%/api/metrics%'
     `).get();
 
-    const errorRate = summary.totalRequests > 0 
-      ? ((summary.totalErrors / summary.totalRequests) * 100).toFixed(2)
-      : 0;
+    const total = row.totalRequests || 0;
+    const avg = Math.round(row.avgResponseTime || 0);
+    const errors = row.totalErrors || 0;
+    const errorRate = total > 0 ? Number(((errors / total) * 100).toFixed(2)) : 0;
 
     res.json({
-      totalRequests: summary.totalRequests || 0,
-      avgResponseTime: Math.round(summary.avgResponseTime || 0),
-      errorRate: parseFloat(errorRate),
+      totalRequests: total,
+      avgResponseTime: avg,
+      errorRate: errorRate,
       timeWindow: `${timeWindow} minutes`
     });
 
-  } catch (error) {
-    console.error("❌ Error fetching summary:", error);
-    res.status(500).json({ error: "Failed to fetch summary" });
+  } catch (err) {
+    console.error("❌ Summary error:", err.message);
+    res.status(500).json({ error: "Failed to compute summary" });
   }
 });
+
 
 // Route-wise analytics (FIXED - No more duplicates!)
 app.get("/api/metrics/routes", (req, res) => {
