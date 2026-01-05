@@ -82,25 +82,27 @@ function addToCache(metric) {
 // METRICS COLLECTION ENDPOINT
 // ============================================
 app.post("/api/metrics", (req, res) => {
-  const { route, method, statusCode, responseTime, isError, sourcePort } = req.body;
+  const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
   const stmt = db.prepare(`
-    INSERT INTO api_metrics (endpoint, method, statusCode, responseTime, isError, timestamp, sourcePort)
+    INSERT INTO api_metrics (route, method, status, response_time, is_error, timestamp, source_port)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
     route,
     method,
-    statusCode,
+    status,
     responseTime,
     isError ? 1 : 0,
     new Date().toISOString(),
-    sourcePort ?? 3001
+    sourcePort ?? sourcePort ?? 3001
   );
 
+  console.log(`📥 Stored Metric → ${method} ${route} (${responseTime}ms)`);
   res.json({ ok: true });
 });
+
 
 
 
