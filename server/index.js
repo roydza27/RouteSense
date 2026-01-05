@@ -89,18 +89,19 @@ app.post("/api/metrics", (req, res) => {
   }
 
   const stmt = db.prepare(`
-    INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
+  INSERT INTO api_metrics (endpoint, method, statusCode, responseTime, isError, timestamp, sourcePort)
+  VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), ?)
+`);
 
-  stmt.run(
-    route,
-    method,
-    status,
-    responseTime,        // correct
-    isError ? 1 : 0,     // convert boolean to 1/0
-    sourcePort ?? 4001   // fallback proxy port
-  );
+stmt.run(
+  route,
+  method,
+  res.statusCode,
+  responseTime,
+  isError ? 1 : 0,
+  sourcePort ?? 4001
+);
+
 
   console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
   res.json({ ok: true });

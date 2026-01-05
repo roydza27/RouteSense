@@ -33,17 +33,14 @@ interface SummaryStat {
 
 interface ApiLog {
   id: number;
-  route: string;        // not endpoint
+  endpoint: string;
   method: string;
-  status: number;       // not statusCode/statusCode
-  responseTime: number; // not responseTime/response_time
+  statusCode: number;
+  responseTime: number;
   isError: boolean;
-  timestamp: string;
+  timestamp: string; // will store only time
   sourcePort: number;
 }
-
-
-
 
 
 
@@ -54,6 +51,7 @@ interface LatencyDataPoint {
 
 export default function Index() {
   const [isConnected, setIsConnected] = useState(false);
+  const ts = new Date(); // or remove it if unused
   const [summary, setSummary] = useState<SummaryStat>({
     totalRequests: 0,
     avgResponseTime: 0,
@@ -119,21 +117,19 @@ export default function Index() {
       setLogs(
         logsRes.data.map(x => ({
           id: x.id,
-          route: x.endpoint ?? x.route ?? "/",
+          endpoint: x.endpoint ?? x.route ?? "/",
           method: x.method ?? "GET",
-          status: x.statusCode ?? x.status ?? 200,
+          statusCode: x.statusCode ?? x.status ?? 200,
           responseTime: x.responseTime ?? x.response_time ?? 0,
           isError: Boolean(x.isError ?? x.is_error ?? false),
-          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30").toLocaleString("en-IN", {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: false,
-            timeZone: "Asia/Kolkata",
-          }),
+          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30")
+            .toLocaleTimeString("en-IN", { hour12: false }), // Only TIME
           sourcePort: x.sourcePort ?? x.source_port ?? 0,
         }))
       );
+
+
+
 
 
     } catch (err) {
