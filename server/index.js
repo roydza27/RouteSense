@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 const app = express();
 const db = new Database("metrics.db");
 
+
 // ============================================
 // DATABASE INITIALIZATION
 // ============================================
@@ -82,32 +83,33 @@ function addToCache(metric) {
 // METRICS COLLECTION ENDPOINT
 // ============================================
 app.post("/api/metrics", (req, res) => {
-  const { route, method, status, responseTime, isError, sourcePort } = req.body;
+  try {
+    const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
-  if (responseTime == null) {
-    return res.status(400).json({ error: "responseTime is required" });
+    if (!route || !method || status == null || responseTime == null) {
+      return res.status(400).json({ ok: false, error: "Missing required fields" });
+    }
+
+    const stmt = db.prepare(`
+      INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      route,
+      method.toUpperCase(),
+      status,
+      responseTime,
+      isError ? 1 : 0,
+      sourcePort ?? 3001
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Metric insert failed:", err);
+    res.status(500).json({ ok: false });
   }
-
-  const stmt = db.prepare(`
-    INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    route,
-    method,
-    status,
-    responseTime,        // correct
-    isError ? 1 : 0,     // convert boolean to 1/0
-    sourcePort ?? 4001   // fallback proxy port
-  );
-
-  console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
-  res.json({ ok: true });
 });
-
-
-
 
 
 
@@ -215,33 +217,34 @@ app.get("/api/metrics/latency", (req, res) => {
 // Live logs / Recent requests
 app.get("/api/metrics/export", (req, res) => {
   try {
-    const limit = req.query.limit || 100;
-    
-    const logs = db.prepare(`
-      SELECT 
-        id,
-        route as endpoint,
-        method,
-        status as statusCode,
-        response_time as responseTime,
-        is_error as isError,
-        timestamp,
-        source_port as sourcePort
+    const limit = Number(req.query.limit) || 5;
+
+    const rows = db.prepare(`
+      SELECT id, route, method, status, response_time, is_error, timestamp, source_port
       FROM api_metrics
-      WHERE route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-      ORDER BY timestamp DESC
+      ORDER BY id DESC
       LIMIT ?
     `).all(limit);
 
+    const formatted = rows.map(r => ({
+      id: r.id,
+      route: r.route,
+      method: r.method,
+      status: r.status,
+      responseTime: r.response_time,
+      isError: Boolean(r.is_error),
+      timestamp: r.timestamp,
+      sourcePort: r.source_port
+    }));
 
-    res.json(logs);
-
-  } catch (error) {
-    console.error("❌ Error fetching logs:", error);
-    res.status(500).json({ error: "Failed to fetch logs" });
+    res.json(formatted);
+  } catch (err) {
+    console.error("Export failed:", err);
+    res.status(500).json([]);
   }
 });
+
+
 
 // Error rate over time
 app.get("/api/metrics/errors", (req, res) => {
