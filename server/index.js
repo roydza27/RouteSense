@@ -81,62 +81,28 @@ function addToCache(metric) {
 // ============================================
 // METRICS COLLECTION ENDPOINT
 // ============================================
-app.post("/api/metrics/forward", async (req, res) => {
-  try {
-    const { route, method, status, responseTime, isError, sourcePort } = req.body;
-    
-    // Validate required fields
-    if (!route || !method || status === undefined || responseTime === undefined) {
-      return res.status(400).json({ 
-        error: "Missing required fields: route, method, status, responseTime" 
-      });
-    }
+app.post("/api/metrics", (req, res) => {
+  const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
-    const metric = {
-      route,
-      method,
-      status,
-      responseTime: parseInt(responseTime),
-      isError: isError ? 1 : 0,
-      sourcePort: sourcePort || null,
-      timestamp: new Date().toISOString()
-    };
+  const stmt = db.prepare(`
+    INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
 
+  stmt.run(
+    route,
+    method,
+    status,
+    responseTime,          // goes into response_time column
+    isError ? 1 : 0,       // goes into is_error column
+    sourcePort             // goes into source_port column
+  );
 
-    // Skip noise routes
-    if (isNoiseRoute(route)) {
-      return res.json({ status: "ignored", reason: "noise route" });
-    }
-
-    // Add to cache
-    addToCache(metric);
-
-    // Insert into database
-    const stmt = db.prepare(`
-      INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    
-    const info = stmt.run(
-      metric.route,
-      metric.method,
-      metric.status,
-      metric.responseTime,   // ✅ correct key
-      metric.isError,
-      metric.sourcePort      // ✅ correct key
-    );
-
-    res.json({ 
-      status: "success", 
-      id: info.lastInsertRowid,
-      message: "Metric recorded"
-    });
-
-  } catch (error) {
-    console.error("❌ Error recording metric:", error);
-    res.status(500).json({ error: "Failed to record metric" });
-  }
+  console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
+  res.json({ ok: true });
 });
+
+
 
 // ============================================
 // DASHBOARD API ENDPOINTS
@@ -373,6 +339,9 @@ app.listen(PORT, () => {
   console.log(`🌐 Running on: http://localhost:${PORT}`);
   console.log(`💾 Database: metrics.db`);
   console.log(`📡 Listening for metrics on: POST /api/metrics/forward`);
+  console.log(`📡 Metrics Collector running on: http://localhost:3002`);
+  console.log(`📤 Accepting metrics on: POST /api/metrics`);
+
   console.log("===========================================\n");
 });
 
