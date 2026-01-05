@@ -85,18 +85,19 @@ app.post("/api/metrics", (req, res) => {
   const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
   const stmt = db.prepare(`
-    INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
-    VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
+  VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
     route,
     method,
     status,
-    responseTime,          // goes into response_time column
-    isError ? 1 : 0,       // goes into is_error column
-    sourcePort             // goes into source_port column
+    response_time,
+    is_error,
+    source_port
   );
+
 
   console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
   res.json({ ok: true });
@@ -107,6 +108,7 @@ app.post("/api/metrics", (req, res) => {
 // ============================================
 // DASHBOARD API ENDPOINTS
 // ============================================
+
 
 // Summary statistics
 app.get("/api/metrics/summary", (req, res) => {

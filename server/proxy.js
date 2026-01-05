@@ -56,13 +56,14 @@ app.use(async (req, res) => {
 
     // Forward metric to collector (real DB feed)
     await sendMetricAsync({
-      route: req.url,
+      route: req.path,
       method: req.method,
       status: response.status,
-      responseTime,
-      isError,
-      sourcePort: CONFIG.PROXY_PORT // ✔ 4001
+      response_time: responseTime,  // 👈 match DB column
+      is_error: isError ? 1 : 0,    // 👈 match DB column
+      source_port: CONFIG.PROXY_PORT
     });
+
 
     res.status(response.status);
     res.send(response.data);
@@ -74,13 +75,14 @@ app.use(async (req, res) => {
     console.log(`   ❌ Proxy Error ${status} — ${responseTime}ms`);
 
     await sendMetricAsync({
-      route: req.url,
+      route: req.path,
       method: req.method,
-      status,
-      responseTime,
-      isError: true,
-      sourcePort: CONFIG.PROXY_PORT
+      status: status,
+      response_time: responseTime,
+      is_error: 1,
+      source_port: CONFIG.PROXY_PORT
     });
+
 
     res.status(503).json({
       error: "Target backend unreachable",
