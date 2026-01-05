@@ -7,13 +7,15 @@ import { cn } from "@/lib/utils";
 // Use real interface — no mockData import
 interface ApiLog {
   id: number;
-  route: string;
+  route: string;        // not endpoint
   method: string;
-  status: number;
-  responseTime: number;
+  status: number;       // not statusCode/statusCode
+  responseTime: number; // not responseTime/response_time
   isError: boolean;
-  timestamp: string | Date;
+  timestamp: string;
+  sourcePort: number;
 }
+
 
 interface LiveLogsProps {
   logs: ApiLog[];

@@ -33,13 +33,19 @@ interface SummaryStat {
 
 interface ApiLog {
   id: number;
-  route: string;
+  route: string;        // not endpoint
   method: string;
-  status: number;
-  responseTime: number;
+  status: number;       // not statusCode/statusCode
+  responseTime: number; // not responseTime/response_time
   isError: boolean;
   timestamp: string;
+  sourcePort: number;
 }
+
+
+
+
+
 
 interface LatencyDataPoint {
   time: string;
@@ -106,21 +112,34 @@ export default function Index() {
       }));
       setRoutes(formattedRoutes);
 
-
-
       const latencyRes = await axios.get<LatencyDataPoint[]>(`${API_BASE}/metrics/latency?limit=20`);
       setLatency(latencyRes.data);
 
+      const logsRes = await axios.get<any[]>(`${API_BASE}/metrics/export?limit=25`);
+      setLogs(
+        logsRes.data.map(x => ({
+          id: x.id,
+          route: x.endpoint ?? x.route ?? "/",
+          method: x.method ?? "GET",
+          status: x.statusCode ?? x.status ?? 200,
+          responseTime: x.responseTime ?? x.response_time ?? 0,
+          isError: Boolean(x.isError ?? x.is_error ?? false),
+          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30").toLocaleString("en-IN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            hour12: false,
+            timeZone: "Asia/Kolkata",
+          }),
+          sourcePort: x.sourcePort ?? x.source_port ?? 0,
+        }))
+      );
 
-      const logsRes = await axios.get<ApiLog[]>(`${API_BASE}/metrics/export?limit=25`);
-      setLogs(logsRes.data);
 
     } catch (err) {
       console.error("Metrics fetch failed:", err);
     }
   }
-
-
 
   return (
     <div className="min-h-screen bg-background">
