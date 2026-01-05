@@ -33,14 +33,15 @@ interface SummaryStat {
 
 interface ApiLog {
   id: number;
-  endpoint: string;
+  route: string;
   method: string;
-  statusCode: number;
+  status: number;
   responseTime: number;
   isError: boolean;
-  timestamp: string; // will store only time
+  timestamp: string;
   sourcePort: number;
 }
+
 
 
 
@@ -117,16 +118,17 @@ export default function Index() {
       setLogs(
         logsRes.data.map(x => ({
           id: x.id,
-          endpoint: x.endpoint ?? x.route ?? "/",
+          route: x.endpoint ?? x.route ?? "/",
           method: x.method ?? "GET",
-          statusCode: x.statusCode ?? x.status ?? 200,
+          status: x.statusCode ?? x.status ?? 200,
           responseTime: x.responseTime ?? x.response_time ?? 0,
           isError: Boolean(x.isError ?? x.is_error ?? false),
           timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30")
-            .toLocaleTimeString("en-IN", { hour12: false }), // Only TIME
+            .toLocaleTimeString("en-IN", { hour12: false }),
           sourcePort: x.sourcePort ?? x.source_port ?? 0,
         }))
       );
+
 
 
 

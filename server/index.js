@@ -82,31 +82,25 @@ function addToCache(metric) {
 // METRICS COLLECTION ENDPOINT
 // ============================================
 app.post("/api/metrics", (req, res) => {
-  const { route, method, status, responseTime, isError, sourcePort } = req.body;
-
-  if (responseTime == null) {
-    return res.status(400).json({ error: "responseTime is required" });
-  }
+  const { route, method, statusCode, responseTime, isError, sourcePort } = req.body;
 
   const stmt = db.prepare(`
-  INSERT INTO api_metrics (endpoint, method, statusCode, responseTime, isError, timestamp, sourcePort)
-  VALUES (?, ?, ?, ?, ?, datetime('now','localtime'), ?)
-`);
+    INSERT INTO api_metrics (endpoint, method, statusCode, responseTime, isError, timestamp, sourcePort)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
 
-stmt.run(
-  route,
-  method,
-  res.statusCode,
-  responseTime,
-  isError ? 1 : 0,
-  sourcePort ?? 4001
-);
+  stmt.run(
+    route,
+    method,
+    statusCode,
+    responseTime,
+    isError ? 1 : 0,
+    new Date().toISOString(),
+    sourcePort ?? 3001
+  );
 
-
-  console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
   res.json({ ok: true });
 });
-
 
 
 
@@ -216,33 +210,28 @@ app.get("/api/metrics/latency", (req, res) => {
 // Live logs / Recent requests
 app.get("/api/metrics/export", (req, res) => {
   try {
-    const limit = req.query.limit || 100;
-    
-    const logs = db.prepare(`
-      SELECT 
-        id,
-        route as endpoint,
-        method,
-        status as statusCode,
-        response_time as responseTime,
-        is_error as isError,
-        timestamp,
-        source_port as sourcePort
-      FROM api_metrics
-      WHERE route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-      ORDER BY timestamp DESC
-      LIMIT ?
-    `).all(limit);
+    const rows = db.prepare(
+      `SELECT id, route AS endpoint, method, status AS statusCode, response_time AS responseTime, is_error AS isError, timestamp, source_port AS sourcePort FROM api_metrics ORDER BY id DESC LIMIT 25`
+    ).all();
 
+    const formatted = rows.map(row => ({
+      id: row.id,
+      endpoint: row.endpoint,
+      method: row.method,
+      statusCode: row.statusCode,
+      responseTime: row.responseTime,
+      isError: Boolean(row.isError),
+      timestamp: row.timestamp,   // keep original string, frontend will format time
+      sourcePort: row.sourcePort
+    }));
 
-    res.json(logs);
-
-  } catch (error) {
-    console.error("❌ Error fetching logs:", error);
-    res.status(500).json({ error: "Failed to fetch logs" });
+    res.json(formatted);
+  } catch (err) {
+    res.status(500).json({ error: "Metric export failed" });
   }
 });
+
+
 
 // Error rate over time
 app.get("/api/metrics/errors", (req, res) => {
