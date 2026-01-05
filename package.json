@@ -10,9 +10,11 @@
     "build:dev": "vite build --mode development",
     "proxy": "node server/proxy.js --port 4001",
     "collector": "node server/collector.js --port 3002",
+    "dev:test-traffic": "node server/testTraffic.js",
     "lint": "eslint .",
     "preview": "vite preview",
-    "dev": "vite --port 8080",
+    "dev": "vite --port 8080 --host",
+    
     "clean": "del metrics.db metrics.db-shm metrics.db-wal"
   }
 ,

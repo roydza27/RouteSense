@@ -84,6 +84,10 @@ function addToCache(metric) {
 app.post("/api/metrics", (req, res) => {
   const { route, method, status, responseTime, isError, sourcePort } = req.body;
 
+  if (responseTime == null) {
+    return res.status(400).json({ error: "responseTime is required" });
+  }
+
   const stmt = db.prepare(`
     INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -93,14 +97,17 @@ app.post("/api/metrics", (req, res) => {
     route,
     method,
     status,
-    responseTime ?? 0,
-    isError ? 1 : 0,
-    sourcePort ?? null
+    responseTime,        // correct
+    isError ? 1 : 0,     // convert boolean to 1/0
+    sourcePort ?? 4001   // fallback proxy port
   );
 
   console.log(`📥 Metric received: ${method} ${route} — ${responseTime}ms`);
   res.json({ ok: true });
 });
+
+
+
 
 
 
@@ -113,90 +120,68 @@ app.post("/api/metrics", (req, res) => {
 
 // Summary statistics
 app.get("/api/metrics/summary", (req, res) => {
-  try {
-    const timeWindow = Number(req.query.minutes) || 60;
+  const row = db.prepare(`
+    SELECT 
+      COUNT(*) as totalRequests,
+      AVG(response_time) as avgResponseTime,
+      SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as totalErrors
+    FROM api_metrics
+    WHERE route NOT LIKE '%favicon%'
+    AND route NOT LIKE '%/api/metrics%'
+  `).get();
 
-    const row = db.prepare(`
-      SELECT 
-        COUNT(*) as totalRequests,
-        AVG(response_time) as avgResponseTime,
-        SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as totalErrors
-      FROM api_metrics
-      WHERE timestamp >= datetime('now', '-${timeWindow} minutes')
-      AND route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-    `).get();
+  const totalRequests = row.totalRequests ?? 0;
+  const avgResponseTime = Math.round(row.avgResponseTime ?? 0);
+  const errorRate = totalRequests > 0 ? Number(((row.totalErrors / totalRequests) * 100).toFixed(2)) : 0;
 
-    const total = row.totalRequests || 0;
-    const avg = Math.round(row.avgResponseTime || 0);
-    const errors = row.totalErrors || 0;
-    const errorRate = total > 0 ? Number(((errors / total) * 100).toFixed(2)) : 0;
-
-    res.json({
-      totalRequests: total,
-      avgResponseTime: avg,
-      errorRate: errorRate,
-      timeWindow: `${timeWindow} minutes`
-    });
-
-  } catch (err) {
-    console.error("❌ Summary error:", err.message);
-    res.status(500).json({ error: "Failed to compute summary" });
-  }
+  res.json({
+    totalRequests,
+    avgResponseTime,
+    errorRate
+  });
 });
+
+
+
 
 
 // Route-wise analytics (FIXED - No more duplicates!)
 app.get("/api/metrics/routes", (req, res) => {
-  try {
-    const timeWindow = req.query.minutes || 60;
-    
-    const routes = db.prepare(`
-      SELECT 
-        route,
-        method,
-        COUNT(*) as hits,
-        AVG(response_time) as avgTime,
-        MAX(response_time) as maxTime,
-        MIN(response_time) as minTime,
-        SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) as errors
-      FROM api_metrics
-      WHERE timestamp >= datetime('now', '-${timeWindow} minutes')
-      AND route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-      GROUP BY route, method
-      ORDER BY hits DESC
-    `).all();
+  const timeWindow = Number(req.query.minutes) || 60;
 
-    // ✅ FIX: Create truly unique IDs by combining route + method
-    const formatted = routes.map(r => {
-      const avgTime = Math.round(r.avgTime);
-      const errorPercent = r.hits > 0 ? ((r.errors / r.hits) * 100).toFixed(2) : 0;
-      
-      // Use route + method as unique identifier
-      const uniqueId = `${r.method.toLowerCase()}-${r.route.replace(/[^a-zA-Z0-9]/g, '-')}`;
-      
-      return {
-        id: uniqueId,  // ✅ Truly unique ID
-        route: r.route,
-        method: r.method,
-        hits: r.hits,
-        avgTime: avgTime,
-        maxTime: Math.round(r.maxTime),
-        minTime: Math.round(r.minTime),
-        errorPercent: parseFloat(errorPercent),
-        status: avgTime > 500 ? "slow" : "normal",
-        isSlow: avgTime > 500
-      };
-    });
+  const rows = db.prepare(`
+    SELECT 
+      route,
+      method,
+      COUNT(*) as hits,
+      ROUND(AVG(response_time)) as avgTime,
+      ROUND(MAX(response_time)) as maxTime,
+      ROUND(MIN(response_time)) as minTime,
+      SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as errorPercent
+    FROM api_metrics
+    WHERE timestamp >= datetime('now', ?)
+    AND route NOT LIKE '%favicon%'
+    AND route NOT LIKE '%/api/metrics%'
+    GROUP BY route, method
+    ORDER BY hits DESC
+  `).all(`-${timeWindow} minutes`);
 
-    res.json(formatted);
+  const formatted = rows.map(r => ({
+    id: `${r.method.toLowerCase()}-${r.route.replace(/[^a-zA-Z0-9]/g, "-")}`,
+    route: r.route,
+    method: r.method,
+    hits: r.hits,
+    avgTime: r.avgTime,
+    maxTime: r.maxTime,
+    minTime: r.minTime,
+    errorPercent: Number(r.errorPercent.toFixed(2)),
+    status: r.avgTime > 500 ? "slow" : "normal",
+    isSlow: r.avgTime > 500
+  }));
 
-  } catch (error) {
-    console.error("❌ Error fetching routes:", error);
-    res.status(500).json({ error: "Failed to fetch routes" });
-  }
+  res.json(formatted);
 });
+
 
 // Latency time series data
 app.get("/api/metrics/latency", (req, res) => {

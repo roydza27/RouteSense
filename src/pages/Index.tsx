@@ -17,10 +17,13 @@ interface RouteAnalytics {
   method: string;
   hits: number;
   avgTime: number;
+  maxTime: number;
+  minTime: number;
   errorPercent: number;
   status: string;
   isSlow?: boolean;
 }
+
 
 interface SummaryStat {
   totalRequests: number;
@@ -70,6 +73,8 @@ export default function Index() {
     // Health check: confirm collector DB has at least 1 row
     try {
       const health = await axios.get<ApiLog[]>(`${API_BASE}/metrics/export?limit=1`);
+
+
       setIsConnected(health.data.length > 0);
     } catch {
       setIsConnected(false);
@@ -78,55 +83,37 @@ export default function Index() {
 
     try {
       // 1. Summary
-      const summaryRes = await axios.get<any>(`${API_BASE}/metrics/summary`);
+      const summaryRes = await axios.get<SummaryStat>(`${API_BASE}/metrics/summary`);
       setSummary({
         totalRequests: summaryRes.data.totalRequests ?? 0,
         avgResponseTime: summaryRes.data.avgResponseTime ?? 0,
         errorRate: summaryRes.data.errorRate ?? 0,
       });
 
-      const routesRes = await axios.get<any[]>(`${API_BASE}/metrics/routes`);
+      // 2. Routes 
+      const routesRes = await axios.get<RouteAnalytics[]>(`${API_BASE}/metrics/routes`);
       const formattedRoutes = routesRes.data.map(r => ({
-        id: `${r.method.toLowerCase()}-${r.route.replace(/[^a-zA-Z0-9]/g, "-")}`,
+        id: r.id,
         route: r.route,
         method: r.method,
-        hits: r.hits ?? 0,
-        avgTime: Math.round(r.avgResponseTime ?? r.response_time ?? 0),
-        errorPercent: parseFloat(r.errorRate ?? 0),
-        status: (r.avgResponseTime ?? 0) > 500 ? "slow" : "normal",
-        isSlow: (r.avgResponseTime ?? 0) > 500,
+        hits: r.hits,
+        avgTime: r.avgTime,
+        maxTime: r.maxTime,
+        minTime: r.minTime,
+        errorPercent: r.errorPercent,
+        status: r.status,
+        isSlow: r.isSlow,
       }));
       setRoutes(formattedRoutes);
 
-      const latencyRes = await axios.get<any[]>(`${API_BASE}/metrics/latency?limit=20`);
-      const formattedLatency = latencyRes.data.map(p => ({
-        time: p.time,
-        latency: p.latency ?? p.responseTime ?? p.response_time ?? 0,
-        route: p.route,
-        method: p.method,
-      }));
-      setLatency(formattedLatency);
-
-      const logsRes = await axios.get<any[]>(`${API_BASE}/metrics/export?limit=25`);
-      const formattedLogs = logsRes.data.map(log => ({
-        id: log.id,
-        route: log.endpoint ?? log.route,
-        method: log.method,
-        status: log.statusCode ?? log.status ?? 200,
-        responseTime: log.responseTime ?? log.response_time ?? 0,
-        isError: log.isError === 1 || log.is_error === 1 || log.isError === true,
-        timestamp: log.timestamp,
-        sourcePort: log.sourcePort ?? log.source_port ?? 0,
-      }));
-      setLogs(formattedLogs);
 
 
-      // Optional: generate some traffic so UI fills up
-      axios.get(`${API_PROXY}/test/slow`).catch(() => { });
-      axios.get(`${API_PROXY}/test/fast`).catch(() => { });
-      axios.post(`${API_PROXY}/repo/status`, {
-        workspacePath: "C:/Users/royal/Documents/Daily-Plan-Projects/metric-heartbeat"
-      }).catch(() => { });
+      const latencyRes = await axios.get<LatencyDataPoint[]>(`${API_BASE}/metrics/latency?limit=20`);
+      setLatency(latencyRes.data);
+
+
+      const logsRes = await axios.get<ApiLog[]>(`${API_BASE}/metrics/export?limit=25`);
+      setLogs(logsRes.data);
 
     } catch (err) {
       console.error("Metrics fetch failed:", err);

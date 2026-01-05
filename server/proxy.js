@@ -102,6 +102,20 @@ async function sendMetricAsync(metric) {
   } catch(e) {
     console.error(`   ⚠️ Metric send failed`);
   }
+  try {
+    await axios.post(CONFIG.METRICS_COLLECTOR_URL, {
+      route: metric.route || metric.endpoint,  // 👈 ensure key is "route"
+      method: metric.method,
+      status: metric.status || metric.statusCode || 200, // 👈 ensure key is "status"
+      responseTime: metric.responseTime ?? metric.response_time ?? 0, // 👈 ensure key is "responseTime"
+      isError: metric.isError ?? metric.is_error ?? false,
+      sourcePort: CONFIG.PROXY_PORT
+    });
+
+  } catch {
+    console.log("⚠️ Metric forward failed but saved locally");
+  }
+
 }
 
 // ============================================
@@ -110,6 +124,8 @@ async function sendMetricAsync(metric) {
 app.listen(CONFIG.PROXY_PORT, () => {
   console.log("🔀 Proxy running and sniffing metrics\n");
 });
+
+
 
 // Graceful shutdown
 process.on("SIGINT", () => {
