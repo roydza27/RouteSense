@@ -6,13 +6,11 @@ import { MetricCard } from "@/components/dashboard/MetricCard";
 import { LatencyChart } from "@/components/dashboard/LatencyChart";
 import { RouteTable } from "@/components/dashboard/RouteTable";
 import { LiveLogs } from "@/components/dashboard/LiveLogs";
-import { mockMetricsSummary, mockApiLogs, mockLatencyData, } from '@/lib/mockData';
-import { RouteAnalytics } from "@/lib/mockData";
 
-const API_BASE = "http://localhost:3001/api/metrics";
+const API_BASE = "http://localhost:3002/api/metrics";
 
-interface RouteStat {
-  id: number;
+interface RouteAnalytics {
+  id: string;
   route: string;
   method: string;
   hits: number;
@@ -28,19 +26,44 @@ interface SummaryStat {
   errorRate: number;
 }
 
-export default function Index() {
+interface ApiLog {
+  id: number;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  responseTime: number;
+  isError: boolean;
+  timestamp: string;
+}
 
-  
+interface LatencyDataPoint {
+  time: string;
+  latency: number;
+}
+
+export default function Index() {
   const [isConnected, setIsConnected] = useState(false);
   const [summary, setSummary] = useState<SummaryStat>({
     totalRequests: 0,
     avgResponseTime: 0,
     errorRate: 0,
   });
-  const [routes, setRoutes] = useState<RouteAnalytics[]>([]);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [latency, setLatency] = useState<any[]>([]);
 
+  const [routes, setRoutes] = useState<RouteAnalytics[]>([]);
+  const [logs, setLogs] = useState<ApiLog[]>([]);
+  const [latency, setLatency] = useState<LatencyDataPoint[]>([]);
+
+  const sampleMetrics: RouteAnalytics[] = [
+    { id: "get-api-users", route: "/api/users", method: "GET", hits: 120, avgTime: 230, errorPercent: 0, status: "normal" },
+    { id: "post-api-login", route: "/api/login", method: "POST", hits: 80, avgTime: 420, errorPercent: 2.5, status: "normal" },
+    { id: "get-api-data", route: "/api/data", method: "GET", hits: 40, avgTime: 900, errorPercent: 5, status: "slow", isSlow: true }
+  ];
+
+  const sampleLatency: LatencyDataPoint[] = [
+    { time: "10:01:22", latency: 220 },
+    { time: "10:01:25", latency: 480 },
+    { time: "10:01:27", latency: 1100 }
+  ];
 
   useEffect(() => {
     fetchMetrics();
@@ -48,16 +71,9 @@ export default function Index() {
     return () => clearInterval(interval);
   }, []);
 
-  const isNoise = (route: string) =>
-    !route ||
-    route.includes("favicon") ||
-    route.includes("/metrics") ||
-    route.startsWith("/api/metrics");
-
   async function fetchMetrics() {
     try {
-      // Health check using an actual existing endpoint
-      await axios.get("http://localhost:3001/api/metrics/summary");
+      await axios.get(`${API_BASE}/summary`);
       setIsConnected(true);
     } catch {
       setIsConnected(false);
@@ -65,101 +81,56 @@ export default function Index() {
     }
 
     try {
-      const s = await axios.get<SummaryStat>(`${API_BASE}/summary`);
-      setSummary(s.data);
+      const summaryRes = await axios.get<SummaryStat>(`${API_BASE}/summary`);
+      setSummary(summaryRes.data);
 
-      const r = await axios.get(`${API_BASE}/routes`);
-      const data = Array.isArray(r.data) ? r.data : [];
+      const routesRes = await axios.get<RouteAnalytics[]>(`${API_BASE}/routes`);
+      const uniqueRoutes = Array.from(new Map(routesRes.data.map(r => [r.id, r])).values());
+      setRoutes(uniqueRoutes);
 
-      const formattedRoutes = data
-        .filter((m) => !isNoise(m.route))
-        .map((m) => {
-          const avg = m.avgResponseTime ?? m.avgTime ?? 0;
-          return {
-            id: (m.id ?? Date.now()).toString(), // ✅ FIX HERE
-            route: m.route,
-            method: m.method ?? "GET",
-            hits: m.hits ?? m.requestCount ?? 0,
-            avgTime: avg,
-            errorPercent: m.errorPercent ?? 0,
-            status: avg > 500 ? "slow" : "normal",
-            isSlow: avg > 500,
-          };
-        });
+      const latencyRes = await axios.get<LatencyDataPoint[]>(`${API_BASE}/latency?limit=20`);
+      setLatency(latencyRes.data);
 
-      setRoutes(formattedRoutes);
+      const logsRes = await axios.get<ApiLog[]>(`${API_BASE}/export?limit=50`);
 
+      const formattedLogs = logsRes.data.map(log => ({
+        id: log.id,
+        endpoint: log.endpoint,
+        method: log.method,
+        statusCode: log.statusCode,
+        responseTime: log.responseTime,
+        isError: log.isError,
+        timestamp: log.timestamp
+      }));
 
-      const l = await axios.get(`${API_BASE}/latency`);
-      setLatency(Array.isArray(l.data) ? l.data : []);
-
-      const logRes = await axios.get(`${API_BASE}/export`);
-      setLogs(Array.isArray(logRes.data) ? logRes.data : []);
+      setLogs(formattedLogs);
 
     } catch (err) {
-      console.error("Metrics fetch error", err);
+      console.error("Metrics fetch error:", err);
     }
   }
 
-
   return (
     <div className="min-h-screen bg-background">
-      <Header isConnected={true} />
+      <Header isConnected={isConnected} />
 
       <main className="container mx-auto px-4 py-6 md:px-6 md:py-8">
-        {/* Hero Section */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold tracking-tight md:text-3xl">
-            Dashboard Overview
-          </h2>
-          <p className="mt-1 text-muted-foreground">
-            Backend observability dashboard for tracking API performance, latency, and errors
-          </p>
-        </div>
+        <h2 className="text-2xl font-bold">API Metrics</h2>
 
-        {/* Metrics Summary Grid */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            title="Total API Calls"
-            value={summary.totalRequests.toLocaleString()}
-            trend={mockMetricsSummary.trend.calls}
-            icon={Activity}
-            variant="default"
-          />
-          <MetricCard
-            title="Avg Response Time"
-            value={mockMetricsSummary.avgResponseTime}
-            unit="ms"
-            trend={mockMetricsSummary.trend.responseTime}
-            icon={Clock}
-            variant="default"
-          />
-          <MetricCard
-            title="Error Rate"
-            value={mockMetricsSummary.errorRate}
-            unit="%"
-            trend={mockMetricsSummary.trend.errorRate}
-            icon={AlertTriangle}
-            variant="destructive"
-          />
-          <MetricCard
-            title="Success Rate"
-            value={mockMetricsSummary.successRate}
-            unit="%"
-            icon={CheckCircle2}
-            variant="success"
-          />
+          <MetricCard title="Total API Calls" value={summary.totalRequests.toString()} icon={Activity} variant="default"/>
+          <MetricCard title="Avg Response Time" value={summary.avgResponseTime.toString()} unit="ms" icon={Clock} variant="default"/>
+          <MetricCard title="Error Rate" value={summary.errorRate.toString()} unit="%" icon={AlertTriangle} variant="destructive"/>
+          <MetricCard title="Success Rate" value={(100 - summary.errorRate).toFixed(2)} unit="%" icon={CheckCircle2} variant="success"/>
         </div>
 
-        {/* Charts and Logs Grid */}
-        {/* <div className="mb-8 grid gap-6 lg:grid-cols-2">
-          <LatencyChart data={mockLatencyData} />
-          <LiveLogs logs={mockApiLogs} />
-        </div> */}
+        <div className="mb-8 grid gap-6 lg:grid-cols-2">
+          <LatencyChart data={sampleLatency} />
+          <LiveLogs logs={sampleMetrics} />
+        </div>
 
-        {/* Route Analytics Table */}
         <RouteTable routes={routes} />
       </main>
     </div>
   );
-};
+}
