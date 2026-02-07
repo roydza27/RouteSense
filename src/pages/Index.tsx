@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Activity, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { io } from "socket.io-client";
+
+// Components
 import { Header } from "@/components/dashboard/Header";
+import { DashboardHeader } from "@/components/dashboard/Connectioncard"; 
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { LatencyChart } from "@/components/dashboard/LatencyChart";
 import { RouteTable } from "@/components/dashboard/RouteTable";
 import { LiveLogs } from "@/components/dashboard/LiveLogs";
-
-const API_BASE = "http://localhost:3002/api";
-
-const API_PROXY = "http://localhost:4001/api"; // proxy for making requests
 
 interface RouteAnalytics {
   id: string;
@@ -23,7 +23,6 @@ interface RouteAnalytics {
   status: string;
   isSlow?: boolean;
 }
-
 
 interface SummaryStat {
   totalRequests: number;
@@ -39,11 +38,7 @@ interface ApiLog {
   responseTime: number;
   isError: boolean;
   timestamp: string;
-  sourcePort: number;
 }
-
-
-
 
 interface LatencyDataPoint {
   time: string;
@@ -51,8 +46,17 @@ interface LatencyDataPoint {
 }
 
 export default function Index() {
+  const isFetching = useRef(false);
+
+  const [draftApi] = useState(
+    () => localStorage.getItem("metrics_api") || "http://localhost:3002/api"
+  );
+
+  const [apiBase] = useState(draftApi);
+  const [services, setServices] = useState<string[]>([]);
+  const [selectedService, setSelectedService] = useState<string | null>(null);
+
   const [isConnected, setIsConnected] = useState(false);
-  const ts = new Date(); // or remove it if unused
   const [summary, setSummary] = useState<SummaryStat>({
     totalRequests: 0,
     avgResponseTime: 0,
@@ -61,87 +65,153 @@ export default function Index() {
   const [routes, setRoutes] = useState<RouteAnalytics[]>([]);
   const [logs, setLogs] = useState<ApiLog[]>([]);
   const [latency, setLatency] = useState<LatencyDataPoint[]>([]);
+  const socketRef = useRef<any>(null);
 
+  const [collectorLatency, setCollectorLatency] = useState<number | null>(null);
+  const [lastHeartbeat, setLastHeartbeat] = useState<number | null>(null);
+
+  // --- 1. Socket Connection Logic ---
   useEffect(() => {
-    console.log("Inside the use effect");
+    const base = apiBase.replace("/api", "");
+    socketRef.current = io(base, { transports: ["websocket"] });
+    return () => { socketRef.current?.disconnect(); };
+  }, [apiBase]);
+
+  // --- 2. Service Room Logic ---
+  useEffect(() => {
+    if (!socketRef.current) return;
+
+    // Clear UI instantly when switching
+    setLogs([]);
+    setRoutes([]);
+    setLatency([]);
+    setSummary({ totalRequests: 0, avgResponseTime: 0, errorRate: 0 });
+
+    if (selectedService) {
+      socketRef.current.emit("join_service", selectedService);
+    }
+    return () => {
+      if (selectedService) {
+        socketRef.current.emit("leave_service", selectedService);
+      }
+    };
+  }, [selectedService]);
+
+  // --- 3. Socket Event Listener ---
+  useEffect(() => {
+    if (!socketRef.current) return;
+    const handler = (metric: any) => {
+      if (selectedService && metric.service !== selectedService) return;
+
+      setLogs(prev => [metric, ...prev.slice(0, 24)]);
+      setSummary(prev => ({
+        ...prev,
+        totalRequests: prev.totalRequests + 1
+      }));
+
+      setLatency(prev => [
+        ...prev.slice(-19),
+        { time: new Date().toLocaleTimeString(), latency: metric.responseTime }
+      ]);
+    };
+
+    socketRef.current.on("new_metric", handler);
+    return () => { socketRef.current?.off("new_metric", handler); };
+  }, [selectedService]);
+
+  // --- 4. Service List Polling ---
+  useEffect(() => {
+    const load = () => {
+      axios.get<string[]>(`${apiBase}/services`).then(res => {
+        setServices(res.data);
+      });
+    };
+    load();
+    const interval = setInterval(load, 10000);
+    return () => clearInterval(interval);
+  }, [apiBase]);
+
+  // --- 5. Metrics Polling ---
+  useEffect(() => {
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 3000);
     return () => clearInterval(interval);
-
-  }, []);
-
-  useEffect(() => {
-    console.log("Inside the use effect 2");
-  }, [])
+  }, [apiBase, selectedService]);
 
   async function fetchMetrics() {
-    // Health check: confirm collector DB has at least 1 row
+    if (isFetching.current) return;
+    isFetching.current = true;
+
     try {
-      const health = await axios.get<ApiLog[]>(`${API_BASE}/metrics/export?limit=1`);
+      await axios.get(apiBase.replace("/api", "") + "/health");
+      setIsConnected(true);
 
+      const params = selectedService ? { service: selectedService } : {};
 
-      setIsConnected(health.data.length > 0);
+      const [summaryRes, routesRes, latencyRes, logsRes] = await Promise.all([
+        axios.get<SummaryStat>(`${apiBase}/metrics/summary`, { params }),
+        axios.get<RouteAnalytics[]>(`${apiBase}/metrics/routes`, { params }),
+        axios.get<LatencyDataPoint[]>(`${apiBase}/metrics/latency`, { params }),
+        axios.get<ApiLog[]>(`${apiBase}/metrics/export`, { params })
+      ]);
+      
+      const start = performance.now();
+      await axios.get(apiBase.replace("/api", "") + "/health");
+      const latency = Math.round(performance.now() - start);
+
+      setCollectorLatency(latency);
+      setIsConnected(true);
+      setLastHeartbeat(Date.now());
+      setSummary(summaryRes.data);
+      setRoutes(routesRes.data);
+      setLatency(latencyRes.data);
+      setLogs(logsRes.data);
+
     } catch {
       setIsConnected(false);
+    } finally {
+      isFetching.current = false;
+    }
+  }
+
+  // --- 6. NEW: Clear Metrics Logic ---
+  const clearMetrics = async () => {
+    if (!selectedService) return;
+    
+    if (!window.confirm(`Are you sure you want to clear all history for ${selectedService}?`)) {
       return;
     }
 
     try {
-      // 1. Summary
-      const summaryRes = await axios.get<SummaryStat>(`${API_BASE}/metrics/summary`);
-      setSummary({
-        totalRequests: summaryRes.data.totalRequests ?? 0,
-        avgResponseTime: summaryRes.data.avgResponseTime ?? 0,
-        errorRate: summaryRes.data.errorRate ?? 0,
-      });
-
-      // 2. Routes 
-      const routesRes = await axios.get<RouteAnalytics[]>(`${API_BASE}/metrics/routes`);
-      const formattedRoutes = routesRes.data.map(r => ({
-        id: r.id,
-        route: r.route,
-        method: r.method,
-        hits: r.hits,
-        avgTime: r.avgTime,
-        maxTime: r.maxTime,
-        minTime: r.minTime,
-        errorPercent: r.errorPercent,
-        status: r.status,
-        isSlow: r.isSlow,
-      }));
-      setRoutes(formattedRoutes);
-
-      const latencyRes = await axios.get<LatencyDataPoint[]>(`${API_BASE}/metrics/latency?limit=20`);
-      setLatency(latencyRes.data);
-
-      const logsRes = await axios.get<any[]>(`${API_BASE}/metrics/export?limit=25`);
-      setLogs(
-        logsRes.data.map(x => ({
-          id: x.id,
-          route: x.endpoint ?? x.route ?? "/",
-          method: x.method ?? "GET",
-          status: x.statusCode ?? x.status ?? 200,
-          responseTime: x.responseTime ?? x.response_time ?? 0,
-          isError: Boolean(x.isError ?? x.is_error ?? false),
-          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30")
-            .toLocaleTimeString("en-IN", { hour12: false }),
-          sourcePort: x.sourcePort ?? x.source_port ?? 0,
-        }))
-      );
-
-
-
-
-
-
+      // Calls your new backend endpoint
+      await axios.delete(`${apiBase}/metrics/clear/${selectedService}`);
+      
+      // Reset local state immediately so UI updates instantly
+      setLogs([]);
+      setRoutes([]);
+      setLatency([]);
+      setSummary({ totalRequests: 0, avgResponseTime: 0, errorRate: 0 });
+      
     } catch (err) {
-      console.error("Metrics fetch failed:", err);
+      console.error("Failed to clear metrics", err);
+      // Optional: Add a toast notification here
     }
-  }
+  };
 
   return (
     <div className="min-h-screen bg-background">
       <Header isConnected={isConnected} />
+
+      {/* UPDATED: Passing the onClear prop now */}
+      <DashboardHeader 
+        apiBase={apiBase}
+        selectedService={selectedService}
+        setSelectedService={setSelectedService}
+        isConnected={isConnected}
+        collectorLatency={collectorLatency}
+        services={services}
+        onClear={clearMetrics} 
+      />
       
       <main className="container mx-auto px-4 py-6 md:px-6 md:py-8">
         <div className="mb-8">
