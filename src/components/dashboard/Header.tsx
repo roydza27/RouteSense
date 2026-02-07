@@ -34,12 +34,6 @@ export const Header = ({ isConnected }: HeaderProps) => {
             </span>
           </div>
 
-          {/* Export Button */}
-          <Button variant="outline" size="sm" className="hidden gap-2 sm:flex">
-            <Download className="h-4 w-4" />
-            Export
-          </Button>
-
           {/* Theme Toggle */}
           <Button
             variant="ghost"

@@ -22,3 +22,60 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+python_env/
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nosepy
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# General Database
+*.sql
+*.dump
+*.rdb
+
+# Application secrets (where you might store DB credentials)
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+script/
