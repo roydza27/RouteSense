@@ -79,3 +79,23 @@ coverage.xml
 .env.local
 
 script/
+
+# databases
+*.db
+*.sqlite
+
+# env
+.env
+.env.local
+.env.*
+
+# logs
+logs
+*.log
+
+# node
+node_modules
+
+# OS junk
+.DS_Store
+Thumbs.db
