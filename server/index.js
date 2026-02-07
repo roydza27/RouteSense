@@ -1,30 +1,51 @@
 import express from "express";
+import { Server } from "socket.io";
+import http from "http";
 import cors from "cors";
-import Database from "better-sqlite3";
+import { initDatabase } from "./db.js"; 
 
 const app = express();
-const db = new Database("metrics.db");
+const db = initDatabase();
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
+
+io.on("connection", (socket) => {
+
+  console.log("Client connected:", socket.id);
+
+  socket.on("join_service", (service) => {
+    socket.join(service);
+    console.log(`Socket ${socket.id} joined ${service}`);
+  });
+
+  socket.on("leave_service", (service) => {
+    socket.leave(service);
+    console.log(`Socket ${socket.id} left ${service}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+
+});
 
 
-// ============================================
-// DATABASE INITIALIZATION
-// ============================================
-db.exec(`
-  CREATE TABLE IF NOT EXISTS api_metrics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    route TEXT NOT NULL,
-    method TEXT NOT NULL,
-    status INTEGER NOT NULL,
-    response_time INTEGER NOT NULL,
-    is_error INTEGER NOT NULL,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    source_port INTEGER
-  );
-  
-  CREATE INDEX IF NOT EXISTS idx_route ON api_metrics(route);
-  CREATE INDEX IF NOT EXISTS idx_timestamp ON api_metrics(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_is_error ON api_metrics(is_error);
+
+
+
+const insertMetric = db.prepare(`
+ INSERT INTO api_metrics 
+ (route, method, status, response_time, is_error, source_port, service_name)
+ VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
+
+
 
 console.log("✅ Database initialized with schema");
 
@@ -36,6 +57,7 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], 
   allowedHeaders: ["Content-Type", "Authorization"] 
 }));
+
 app.use(express.json());
 
 // Request logging
@@ -44,72 +66,71 @@ app.use((req, res, next) => {
   next();
 });
 
-// ============================================
-// IN-MEMORY METRICS CACHE
-// ============================================
-const metricsCache = {
-  recent: [], // Last 100 metrics
-  maxSize: 100
-};
-
-// ============================================
-// UTILITY FUNCTIONS
-// ============================================
-function isNoiseRoute(route) {
-  const noisePatterns = [
-    "favicon",
-    "/metrics",
-    "/api/metrics",
-    "/_next",
-    "/static",
-    "/__",
-    ".ico",
-    ".png",
-    ".jpg",
-    ".css",
-    ".js"
-  ];
-  return noisePatterns.some(pattern => route.toLowerCase().includes(pattern));
-}
-
-function addToCache(metric) {
-  metricsCache.recent.unshift(metric);
-  if (metricsCache.recent.length > metricsCache.maxSize) {
-    metricsCache.recent.pop();
-  }
-}
 
 // ============================================
 // METRICS COLLECTION ENDPOINT
 // ============================================
 app.post("/api/metrics", (req, res) => {
   try {
-    const { route, method, status, responseTime, isError, sourcePort } = req.body;
+    const { route, method, status, responseTime, isError, sourcePort, service } = req.body;
 
-    if (!route || !method || status == null || responseTime == null) {
-      return res.status(400).json({ ok: false, error: "Missing required fields" });
+    const serviceName = service || `port-${sourcePort}` || "unknown";
+
+
+    // ✅ FIRST — block dashboard traffic
+    if (route.startsWith("/api/metrics") || route.startsWith("/health")) {
+      return res.json({ ok: true });
     }
 
-    const stmt = db.prepare(`
-      INSERT INTO api_metrics (route, method, status, response_time, is_error, source_port)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
+    if (req.headers["x-observe-ignore"]) return res.json({ ok: true });
 
-    stmt.run(
+
+    // ✅ validate payload
+    if (
+      typeof route !== "string" ||
+      typeof method !== "string" ||
+      typeof status !== "number" ||
+      status < 100 || status > 599 ||
+      typeof responseTime !== "number" ||
+      responseTime < 0
+    ) {
+      return res.status(400).json({ ok: false, error: "Invalid payload" });
+    }
+
+    // ✅ SECOND — persist (SOURCE OF TRUTH)
+    insertMetric.run(
       route,
       method.toUpperCase(),
       status,
       responseTime,
       isError ? 1 : 0,
-      sourcePort ?? 3001
+      sourcePort ?? null,
+      serviceName
     );
 
+    
+
+    // ✅ THIRD — broadcast
+    io.to(serviceName).emit("new_metric", {
+      route,
+      method,
+      status,
+      responseTime,
+      isError,
+      sourcePort,
+      service: serviceName
+    });
+
+
+
     res.json({ ok: true });
+
   } catch (err) {
     console.error("Metric insert failed:", err);
     res.status(500).json({ ok: false });
   }
 });
+
 
 
 
@@ -122,6 +143,9 @@ app.post("/api/metrics", (req, res) => {
 
 // Summary statistics
 app.get("/api/metrics/summary", (req, res) => {
+
+  const service = req.query.service ?? null;
+
   const row = db.prepare(`
     SELECT 
       COUNT(*) as totalRequests,
@@ -130,11 +154,14 @@ app.get("/api/metrics/summary", (req, res) => {
     FROM api_metrics
     WHERE route NOT LIKE '%favicon%'
     AND route NOT LIKE '%/api/metrics%'
-  `).get();
+    AND (? IS NULL OR service_name= ?)
+  `).get(service, service);
 
   const totalRequests = row.totalRequests ?? 0;
   const avgResponseTime = Math.round(row.avgResponseTime ?? 0);
-  const errorRate = totalRequests > 0 ? Number(((row.totalErrors / totalRequests) * 100).toFixed(2)) : 0;
+  const errorRate = totalRequests > 0
+    ? Number(((row.totalErrors / totalRequests) * 100).toFixed(2))
+    : 0;
 
   res.json({
     totalRequests,
@@ -143,13 +170,29 @@ app.get("/api/metrics/summary", (req, res) => {
   });
 });
 
+app.get("/api/services", (req, res) => {
+
+  const rows = db.prepare(`
+    SELECT service_name as service, COUNT(*) as requests
+    FROM api_metrics
+    GROUP BY service_name
+    ORDER BY requests DESC;
+  `).all();
+
+  res.json(rows.map(r => r.service));
+});
+
+
+
 
 
 
 
 // Route-wise analytics (FIXED - No more duplicates!)
 app.get("/api/metrics/routes", (req, res) => {
+
   const timeWindow = Number(req.query.minutes) || 60;
+  const service = req.query.service ?? null;
 
   const rows = db.prepare(`
     SELECT 
@@ -161,134 +204,113 @@ app.get("/api/metrics/routes", (req, res) => {
       ROUND(MIN(response_time)) as minTime,
       SUM(CASE WHEN is_error = 1 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as errorPercent
     FROM api_metrics
-    WHERE timestamp >= datetime('now', ?)
+    WHERE timestamp >= datetime('now', '-' || ? || ' minutes')
     AND route NOT LIKE '%favicon%'
     AND route NOT LIKE '%/api/metrics%'
+    AND (? IS NULL OR service_name= ?)
     GROUP BY route, method
     ORDER BY hits DESC
-  `).all(`-${timeWindow} minutes`);
+  `).all(timeWindow, service, service);
 
-  const formatted = rows.map(r => ({
-    id: `${r.method.toLowerCase()}-${r.route.replace(/[^a-zA-Z0-9]/g, "-")}`,
-    route: r.route,
-    method: r.method,
-    hits: r.hits,
-    avgTime: r.avgTime,
-    maxTime: r.maxTime,
-    minTime: r.minTime,
-    errorPercent: Number(r.errorPercent.toFixed(2)),
-    status: r.avgTime > 500 ? "slow" : "normal",
-    isSlow: r.avgTime > 500
-  }));
-
-  res.json(formatted);
+  res.json(rows);
 });
+
+
 
 
 // Latency time series data
 app.get("/api/metrics/latency", (req, res) => {
-  try {
-    const limit = req.query.limit || 50;
-    const timeWindow = req.query.minutes || 60;
-    
-    const latencyData = db.prepare(`
-      SELECT 
-        strftime('%H:%M:%S', timestamp) as time,
-        response_time as latency,
-        route,
-        method
-      FROM api_metrics
-      WHERE timestamp >= datetime('now', '-${timeWindow} minutes')
-      AND route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-      ORDER BY timestamp DESC
-      LIMIT ?
-    `).all(limit);
 
-    // Reverse to show oldest to newest
-    res.json(latencyData.reverse());
+  const limit = Number(req.query.limit) || 50;
+  const timeWindow = Number(req.query.minutes) || 60;
+  const service = req.query.service ?? null;
 
-  } catch (error) {
-    console.error("❌ Error fetching latency:", error);
-    res.status(500).json({ error: "Failed to fetch latency data" });
-  }
+  const latencyData = db.prepare(`
+    SELECT 
+      strftime('%H:%M:%S', timestamp) as time,
+      response_time as latency,
+      route,
+      method
+    FROM api_metrics
+    WHERE timestamp >= datetime('now', '-' || ? || ' minutes')
+    AND (? IS NULL OR service_name= ?)
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `).all(timeWindow, service, service, limit);
+
+  res.json(latencyData.reverse());
 });
+
+
 
 // Live logs / Recent requests
 app.get("/api/metrics/export", (req, res) => {
+
   try {
-    const limit = Number(req.query.limit) || 5;
+
+    const limit = Number(req.query.limit) || 15;
+    const service = req.query.service ?? null; // ⭐ REQUIRED
 
     const rows = db.prepare(`
       SELECT id, route, method, status, response_time, is_error, timestamp, source_port
       FROM api_metrics
+      WHERE (? IS NULL OR service_name= ?)
       ORDER BY id DESC
       LIMIT ?
-    `).all(limit);
+    `).all(service, service, limit);
 
-    const formatted = rows.map(r => ({
-      id: r.id,
-      route: r.route,
-      method: r.method,
-      status: r.status,
-      responseTime: r.response_time,
-      isError: Boolean(r.is_error),
-      timestamp: r.timestamp,
-      sourcePort: r.source_port
-    }));
+    res.json(rows);
 
-    res.json(formatted);
-  } catch (err) {
-    console.error("Export failed:", err);
+  } catch {
     res.status(500).json([]);
   }
 });
 
 
 
+
 // Error rate over time
 app.get("/api/metrics/errors", (req, res) => {
-  try {
-    const timeWindow = req.query.minutes || 60;
-    
-    const errors = db.prepare(`
-      SELECT 
-        strftime('%H:%M', timestamp) as time,
-        COUNT(*) as count,
-        route,
-        status
-      FROM api_metrics
-      WHERE is_error = 1
-      AND timestamp >= datetime('now', '-${timeWindow} minutes')
-      AND route NOT LIKE '%favicon%'
-      AND route NOT LIKE '%/api/metrics%'
-      GROUP BY strftime('%H:%M', timestamp), route
-      ORDER BY timestamp DESC
-      LIMIT 50
-    `).all();
 
-    res.json(errors);
+  const timeWindow = Number(req.query.minutes) || 60;
+  const service = req.query.service ?? null;
 
-  } catch (error) {
-    console.error("❌ Error fetching error data:", error);
-    res.status(500).json({ error: "Failed to fetch error data" });
-  }
+  const errors = db.prepare(`
+    SELECT 
+      strftime('%H:%M', timestamp) as time,
+      COUNT(*) as count,
+      route,
+      status
+    FROM api_metrics
+    WHERE is_error = 1
+    AND timestamp >= datetime('now', '-' || ? || ' minutes')
+    AND (? IS NULL OR service_name= ?)
+    GROUP BY strftime('%H:%M', timestamp), route
+    ORDER BY timestamp DESC
+    LIMIT 50
+  `).all(timeWindow, service, service);
+
+  res.json(errors);
 });
+
+
 
 // Clear all metrics (for testing)
-app.delete("/api/metrics/clear", (req, res) => {
-  try {
-    db.prepare("DELETE FROM api_metrics").run();
-    metricsCache.recent = [];
-    res.json({ 
-      status: "success", 
-      message: "All metrics cleared" 
-    });
-  } catch (error) {
-    console.error("❌ Error clearing metrics:", error);
-    res.status(500).json({ error: "Failed to clear metrics" });
-  }
+app.delete("/api/metrics/clear/:service", (req, res) => {
+
+  const service = req.params.service;
+
+  db.prepare(`
+    DELETE FROM api_metrics
+    WHERE service_name= ?
+  `).run(service);
+
+  res.json({
+    status: "success",
+    cleared: service
+  });
 });
+
 
 // Database statistics
 app.get("/api/metrics/stats", (req, res) => {
@@ -316,17 +338,18 @@ app.get("/health", (req, res) => {
     status: "ok", 
     service: "metrics-collector",
     timestamp: new Date().toISOString(),
-    database: "connected",
-    cacheSize: metricsCache.recent.length
+    database: "connected"
   });
 });
+
+
 
 // ============================================
 // SERVER START
 // ============================================
 
 const PORT = 3002;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log("\n🚀 ===========================================");
   console.log(`📊 Metrics Collector Server Started`);
   console.log(`🌐 Running on: http://localhost:${PORT}`);

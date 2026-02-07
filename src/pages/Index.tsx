@@ -38,6 +38,7 @@ interface ApiLog {
   responseTime: number;
   isError: boolean;
   timestamp: string;
+  sourcePort?: number;
 }
 
 interface LatencyDataPoint {

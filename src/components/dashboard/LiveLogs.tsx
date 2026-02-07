@@ -13,7 +13,7 @@ interface ApiLog {
   responseTime: number;
   isError: boolean;
   timestamp: string;
-  sourcePort: number;
+  sourcePort?: number;
 }
 
 
