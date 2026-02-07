@@ -12,8 +12,12 @@ interface ApiLog {
   status: number;
   responseTime: number;
   isError: boolean;
-  timestamp: string | Date;
+  timestamp: string;
+  sourcePort: number;
 }
+
+
+
 
 interface LiveLogsProps {
   logs: ApiLog[];

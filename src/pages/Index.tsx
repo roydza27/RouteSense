@@ -39,7 +39,11 @@ interface ApiLog {
   responseTime: number;
   isError: boolean;
   timestamp: string;
+  sourcePort: number;
 }
+
+
+
 
 interface LatencyDataPoint {
   time: string;
@@ -48,6 +52,7 @@ interface LatencyDataPoint {
 
 export default function Index() {
   const [isConnected, setIsConnected] = useState(false);
+  const ts = new Date(); // or remove it if unused
   const [summary, setSummary] = useState<SummaryStat>({
     totalRequests: 0,
     avgResponseTime: 0,
@@ -106,21 +111,33 @@ export default function Index() {
       }));
       setRoutes(formattedRoutes);
 
-
-
       const latencyRes = await axios.get<LatencyDataPoint[]>(`${API_BASE}/metrics/latency?limit=20`);
       setLatency(latencyRes.data);
 
+      const logsRes = await axios.get<any[]>(`${API_BASE}/metrics/export?limit=25`);
+      setLogs(
+        logsRes.data.map(x => ({
+          id: x.id,
+          route: x.endpoint ?? x.route ?? "/",
+          method: x.method ?? "GET",
+          status: x.statusCode ?? x.status ?? 200,
+          responseTime: x.responseTime ?? x.response_time ?? 0,
+          isError: Boolean(x.isError ?? x.is_error ?? false),
+          timestamp: new Date(x.timestamp.replace(" ", "T") + "+05:30")
+            .toLocaleTimeString("en-IN", { hour12: false }),
+          sourcePort: x.sourcePort ?? x.source_port ?? 0,
+        }))
+      );
 
-      const logsRes = await axios.get<ApiLog[]>(`${API_BASE}/metrics/export?limit=25`);
-      setLogs(logsRes.data);
+
+
+
+
 
     } catch (err) {
       console.error("Metrics fetch failed:", err);
     }
   }
-
-
 
   return (
     <div className="min-h-screen bg-background">
