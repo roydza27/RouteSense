@@ -50,7 +50,7 @@ export default function Index() {
   const isFetching = useRef(false);
 
   const [draftApi] = useState(
-    () => localStorage.getItem("metrics_api") || "http://localhost:3002/api"
+    () =>   "https://routesense.onrender.com/api"
   );
 
   const [apiBase] = useState(draftApi);
